@@ -6,6 +6,7 @@ import os
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote_plus
 
 from sqlalchemy import (
     Boolean,
@@ -191,8 +192,6 @@ def _build_sqlalchemy_url(conn_str: str) -> str:
         odbc_params.append(f"Connection Timeout={timeout}")
     
     # Build the SQLAlchemy URL
-    from urllib.parse import quote_plus
-    
     if username and password:
         # Standard SQL authentication
         user_pass = f"{quote_plus(username)}:{quote_plus(password)}@"
