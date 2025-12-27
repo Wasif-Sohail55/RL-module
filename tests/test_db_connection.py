@@ -60,7 +60,7 @@ class TestBuildSqlalchemyUrl:
         assert result.startswith("mssql+pyodbc://")
         assert "projectserver2181104.database.windows.net:1433" in result
         assert "projectdatabase181104" in result
-        assert "driver=ODBC+Driver+18+for+SQL+Server" in result
+        assert "driver={ODBC Driver 18 for SQL Server}" in result
         assert "Encrypt=yes" in result
         assert "TrustServerCertificate=no" in result
         assert "Authentication=ActiveDirectoryDefault" in result
@@ -93,3 +93,16 @@ class TestBuildSqlalchemyUrl:
         result = _build_sqlalchemy_url(conn_str)
         
         assert "myserver:1433" in result
+
+    def test_custom_driver_in_connection_string(self):
+        conn_str = "Server=myserver;Database=mydb;Driver=ODBC Driver 17 for SQL Server;"
+        result = _build_sqlalchemy_url(conn_str)
+        
+        assert "driver={ODBC Driver 17 for SQL Server}" in result
+        assert "ODBC Driver 18" not in result
+
+    def test_custom_driver_with_braces_preserved(self):
+        conn_str = "Server=myserver;Database=mydb;Driver={ODBC Driver 17 for SQL Server};"
+        result = _build_sqlalchemy_url(conn_str)
+        
+        assert "driver={ODBC Driver 17 for SQL Server}" in result

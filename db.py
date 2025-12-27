@@ -170,8 +170,19 @@ def _build_sqlalchemy_url(conn_str: str) -> str:
     # Build ODBC connection options
     odbc_params = []
     
-    # Default to ODBC Driver 18 for SQL Server
-    odbc_params.append("driver=ODBC+Driver+18+for+SQL+Server")
+    # Check if user specified a driver in the connection string
+    user_driver = params_lower.get("driver", "")
+    if user_driver:
+        # Use user-specified driver (ensure braces are added if not present)
+        if not (user_driver.startswith("{") and user_driver.endswith("}")):
+            user_driver = user_driver.strip("{}")
+            user_driver = "{" + user_driver + "}"
+        odbc_params.append(f"driver={user_driver}")
+    else:
+        # Default to ODBC Driver 18 for SQL Server
+        # Users can specify a different driver version (e.g., ODBC Driver 17)
+        # by adding "Driver=ODBC Driver 17 for SQL Server" to their connection string
+        odbc_params.append("driver={ODBC Driver 18 for SQL Server}")
     
     # Add encryption settings
     if params_lower.get("encrypt", "").lower() == "true":
