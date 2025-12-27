@@ -117,6 +117,95 @@ mastery = Table(
 engine_cache: Optional[Engine] = None
 
 
+def _parse_adonet_connection_string(conn_str: str) -> Dict[str, str]:
+    """Parse an ADO.NET-style connection string into a dictionary."""
+    params = {}
+    for part in conn_str.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" in part:
+            key, value = part.split("=", 1)
+            # Remove surrounding quotes if present
+            value = value.strip().strip('"').strip("'")
+            params[key.strip()] = value
+    return params
+
+
+def _build_sqlalchemy_url(conn_str: str) -> str:
+    """Convert an ADO.NET connection string to a SQLAlchemy URL.
+    
+    If the connection string already looks like a SQLAlchemy URL (contains ://),
+    it is returned as-is.
+    """
+    # Check if it's already a SQLAlchemy URL
+    if "://" in conn_str:
+        return conn_str
+    
+    params = _parse_adonet_connection_string(conn_str)
+    
+    # Extract common parameters (case-insensitive matching)
+    params_lower = {k.lower(): v for k, v in params.items()}
+    
+    # Get server and port
+    server = params_lower.get("server", params_lower.get("data source", ""))
+    # Handle tcp:server,port format
+    if server.startswith("tcp:"):
+        server = server[4:]
+    
+    # Split server and port if comma-separated
+    port = "1433"
+    if "," in server:
+        server, port = server.rsplit(",", 1)
+    
+    # Get database name
+    database = params_lower.get("initial catalog", params_lower.get("database", ""))
+    
+    # Get authentication info
+    username = params_lower.get("user id", params_lower.get("uid", ""))
+    password = params_lower.get("password", params_lower.get("pwd", ""))
+    authentication = params_lower.get("authentication", "")
+    
+    # Build ODBC connection options
+    odbc_params = []
+    
+    # Default to ODBC Driver 18 for SQL Server
+    odbc_params.append("driver=ODBC+Driver+18+for+SQL+Server")
+    
+    # Add encryption settings
+    if params_lower.get("encrypt", "").lower() == "true":
+        odbc_params.append("Encrypt=yes")
+    
+    if params_lower.get("trustservercertificate", "").lower() == "true":
+        odbc_params.append("TrustServerCertificate=yes")
+    else:
+        odbc_params.append("TrustServerCertificate=no")
+    
+    # Handle Azure AD authentication
+    if "active directory" in authentication.lower():
+        odbc_params.append("Authentication=ActiveDirectoryDefault")
+    
+    # Connection timeout
+    timeout = params_lower.get("connection timeout", params_lower.get("connect timeout", ""))
+    if timeout:
+        odbc_params.append(f"Connection Timeout={timeout}")
+    
+    # Build the SQLAlchemy URL
+    from urllib.parse import quote_plus
+    
+    if username and password:
+        # Standard SQL authentication
+        user_pass = f"{quote_plus(username)}:{quote_plus(password)}@"
+    else:
+        # Azure AD or Windows authentication (no credentials in URL)
+        user_pass = ""
+    
+    # Construct the mssql+pyodbc URL
+    url = f"mssql+pyodbc://{user_pass}{server}:{port}/{database}?{'&'.join(odbc_params)}"
+    
+    return url
+
+
 def get_engine() -> Engine:
     """Create or return a cached SQLAlchemy engine."""
     global engine_cache
@@ -133,7 +222,9 @@ def get_engine() -> Engine:
             poolclass=StaticPool,
         )
     else:
-        engine_cache = create_engine(conn_str, future=True)
+        # Convert ADO.NET connection strings to SQLAlchemy URLs
+        sqlalchemy_url = _build_sqlalchemy_url(conn_str)
+        engine_cache = create_engine(sqlalchemy_url, future=True)
     return engine_cache
 
 
