@@ -138,6 +138,8 @@ def _build_sqlalchemy_url(conn_str: str) -> str:
     
     If the connection string already looks like a SQLAlchemy URL (contains ://),
     it is returned as-is.
+    
+    For pyodbc, we use the odbc_connect parameter with a complete ODBC connection string.
     """
     # Check if it's already a SQLAlchemy URL
     if "://" in conn_str:
@@ -150,14 +152,10 @@ def _build_sqlalchemy_url(conn_str: str) -> str:
     
     # Get server and port
     server = params_lower.get("server", params_lower.get("data source", ""))
-    # Handle tcp:server,port format
+    # Handle tcp:server,port format - remove the tcp: prefix
+    # ODBC expects SERVER=host,port format (comma stays as-is)
     if server.startswith("tcp:"):
         server = server[4:]
-    
-    # Split server and port if comma-separated
-    port = "1433"
-    if "," in server:
-        server, port = server.rsplit(",", 1)
     
     # Get database name
     database = params_lower.get("initial catalog", params_lower.get("database", ""))
@@ -167,52 +165,57 @@ def _build_sqlalchemy_url(conn_str: str) -> str:
     password = params_lower.get("password", params_lower.get("pwd", ""))
     authentication = params_lower.get("authentication", "")
     
-    # Build ODBC connection options
-    odbc_params = []
+    # Build ODBC connection string parts
+    odbc_parts = []
     
-    # Check if user specified a driver in the connection string
+    # Driver - check if user specified one, otherwise default to ODBC Driver 18
     user_driver = params_lower.get("driver", "")
     if user_driver:
-        # Use user-specified driver (ensure braces are present for ODBC)
+        # Ensure braces are present for ODBC
         user_driver = user_driver.strip("{}")
-        user_driver = "{" + user_driver + "}"
+        odbc_parts.append(f"DRIVER={{{user_driver}}}")
     else:
-        # Default to ODBC Driver 18 for SQL Server
-        # Users can specify a different driver version (e.g., ODBC Driver 17)
-        # by adding "Driver=ODBC Driver 17 for SQL Server" to their connection string
-        user_driver = "{ODBC Driver 18 for SQL Server}"
+        odbc_parts.append("DRIVER={ODBC Driver 18 for SQL Server}")
     
-    # URL-encode the driver name (braces need to be encoded for URL query strings)
-    odbc_params.append(f"driver={quote_plus(user_driver)}")
+    # Server
+    if server:
+        odbc_parts.append(f"SERVER={server}")
     
-    # Add encryption settings
+    # Database
+    if database:
+        odbc_parts.append(f"DATABASE={database}")
+    
+    # Authentication - SQL auth (username/password) or Azure AD
+    if username and password:
+        odbc_parts.append(f"UID={username}")
+        odbc_parts.append(f"PWD={password}")
+    
+    # Azure AD authentication (only add if not using SQL auth)
+    if "active directory" in authentication.lower() and not (username and password):
+        odbc_parts.append("Authentication=ActiveDirectoryDefault")
+    
+    # Encryption settings
     if params_lower.get("encrypt", "").lower() == "true":
-        odbc_params.append("Encrypt=yes")
+        odbc_parts.append("Encrypt=yes")
     
     if params_lower.get("trustservercertificate", "").lower() == "true":
-        odbc_params.append("TrustServerCertificate=yes")
+        odbc_parts.append("TrustServerCertificate=yes")
     else:
-        odbc_params.append("TrustServerCertificate=no")
-    
-    # Handle Azure AD authentication
-    if "active directory" in authentication.lower():
-        odbc_params.append("Authentication=ActiveDirectoryDefault")
+        odbc_parts.append("TrustServerCertificate=no")
     
     # Connection timeout
     timeout = params_lower.get("connection timeout", params_lower.get("connect timeout", ""))
     if timeout:
-        odbc_params.append(f"Connection Timeout={timeout}")
+        odbc_parts.append(f"Connection Timeout={timeout}")
     
-    # Build the SQLAlchemy URL
-    if username and password:
-        # Standard SQL authentication
-        user_pass = f"{quote_plus(username)}:{quote_plus(password)}@"
-    else:
-        # Azure AD or Windows authentication (no credentials in URL)
-        user_pass = ""
+    # Build the complete ODBC connection string
+    odbc_conn_str = ";".join(odbc_parts)
     
-    # Construct the mssql+pyodbc URL
-    url = f"mssql+pyodbc://{user_pass}{server}:{port}/{database}?{'&'.join(odbc_params)}"
+    # URL-encode the entire ODBC connection string
+    encoded_odbc = quote_plus(odbc_conn_str)
+    
+    # Construct the mssql+pyodbc URL using odbc_connect parameter
+    url = f"mssql+pyodbc:///?odbc_connect={encoded_odbc}"
     
     return url
 

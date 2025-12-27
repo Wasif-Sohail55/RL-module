@@ -1,5 +1,6 @@
 """Tests for ADO.NET connection string parsing in db.py"""
 import pytest
+from urllib.parse import unquote_plus
 
 from db import _parse_adonet_connection_string, _build_sqlalchemy_url
 
@@ -56,16 +57,21 @@ class TestBuildSqlalchemyUrl:
         )
         result = _build_sqlalchemy_url(conn_str)
         
-        # Check the URL structure
-        assert result.startswith("mssql+pyodbc://")
-        assert "projectserver2181104.database.windows.net:1433" in result
-        assert "projectdatabase181104" in result
-        # Driver is URL-encoded: { = %7B, } = %7D
-        assert "driver=%7BODBC+Driver+18+for+SQL+Server%7D" in result
-        assert "Encrypt=yes" in result
-        assert "TrustServerCertificate=no" in result
-        assert "Authentication=ActiveDirectoryDefault" in result
-        assert "Connection Timeout=30" in result
+        # Check the URL structure - uses odbc_connect parameter
+        assert result.startswith("mssql+pyodbc:///?odbc_connect=")
+        
+        # Extract and decode the odbc_connect value
+        odbc_connect = result.split("odbc_connect=")[1]
+        decoded = unquote_plus(odbc_connect)
+        
+        # Check ODBC connection string parts
+        assert "DRIVER={ODBC Driver 18 for SQL Server}" in decoded
+        assert "SERVER=projectserver2181104.database.windows.net,1433" in decoded
+        assert "DATABASE=projectdatabase181104" in decoded
+        assert "Encrypt=yes" in decoded
+        assert "TrustServerCertificate=no" in decoded
+        assert "Authentication=ActiveDirectoryDefault" in decoded
+        assert "Connection Timeout=30" in decoded
 
     def test_converts_sql_auth_connection_string(self):
         conn_str = (
@@ -76,36 +82,51 @@ class TestBuildSqlalchemyUrl:
         )
         result = _build_sqlalchemy_url(conn_str)
         
-        assert result.startswith("mssql+pyodbc://")
-        assert "myuser:" in result
-        assert "myp%40ssword@" in result  # URL-encoded @
-        assert "myserver.database.windows.net:1433" in result
-        assert "mydb?" in result
+        assert result.startswith("mssql+pyodbc:///?odbc_connect=")
+        
+        # Extract and decode the odbc_connect value
+        odbc_connect = result.split("odbc_connect=")[1]
+        decoded = unquote_plus(odbc_connect)
+        
+        assert "UID=myuser" in decoded
+        assert "PWD=myp@ssword" in decoded
+        assert "SERVER=myserver.database.windows.net,1433" in decoded
+        assert "DATABASE=mydb" in decoded
 
     def test_handles_data_source_alias(self):
         conn_str = "Data Source=myserver;Database=mydb;"
         result = _build_sqlalchemy_url(conn_str)
         
-        assert "myserver" in result
-        assert "mydb" in result
+        odbc_connect = result.split("odbc_connect=")[1]
+        decoded = unquote_plus(odbc_connect)
+        
+        assert "SERVER=myserver" in decoded
+        assert "DATABASE=mydb" in decoded
 
-    def test_default_port_when_not_specified(self):
+    def test_default_driver_when_not_specified(self):
         conn_str = "Server=myserver;Database=mydb;"
         result = _build_sqlalchemy_url(conn_str)
         
-        assert "myserver:1433" in result
+        odbc_connect = result.split("odbc_connect=")[1]
+        decoded = unquote_plus(odbc_connect)
+        
+        assert "DRIVER={ODBC Driver 18 for SQL Server}" in decoded
 
     def test_custom_driver_in_connection_string(self):
         conn_str = "Server=myserver;Database=mydb;Driver=ODBC Driver 17 for SQL Server;"
         result = _build_sqlalchemy_url(conn_str)
         
-        # Driver is URL-encoded: { = %7B, } = %7D
-        assert "driver=%7BODBC+Driver+17+for+SQL+Server%7D" in result
-        assert "ODBC+Driver+18" not in result
+        odbc_connect = result.split("odbc_connect=")[1]
+        decoded = unquote_plus(odbc_connect)
+        
+        assert "DRIVER={ODBC Driver 17 for SQL Server}" in decoded
+        assert "ODBC Driver 18" not in decoded
 
     def test_custom_driver_with_braces_preserved(self):
         conn_str = "Server=myserver;Database=mydb;Driver={ODBC Driver 17 for SQL Server};"
         result = _build_sqlalchemy_url(conn_str)
         
-        # Driver is URL-encoded: { = %7B, } = %7D
-        assert "driver=%7BODBC+Driver+17+for+SQL+Server%7D" in result
+        odbc_connect = result.split("odbc_connect=")[1]
+        decoded = unquote_plus(odbc_connect)
+        
+        assert "DRIVER={ODBC Driver 17 for SQL Server}" in decoded
